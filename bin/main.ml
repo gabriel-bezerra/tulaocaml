@@ -310,8 +310,7 @@ let run_once ast { trace=_; entry_state; tape }: unit =
       | Symbol _ -> failwith "unexpected move. it must be either -> or <-"
     in
     let* tape = tape |> Tape.write write |> Tape.move move in
-    let twice x = x, x in
-    Option.some @@ twice (next, tape)
+    Some (next, tape)
   in
   let print_machine_state (state, tape) =
     (* Format.printf "%a: %a@." pp_symbol state pp_symbol_list (tape |> Tape.to_list) *)
@@ -345,8 +344,10 @@ let run_once ast { trace=_; entry_state; tape }: unit =
     Format.printf "%t" (print_with_marker_under_element l c r);
     ()
   in
-  let states = Seq.unfold transition (entry_state, tape) in
-  print_machine_state (entry_state, tape);
+  let states = Seq.unfold
+    (Option.map (fun st -> (st, transition st)))
+    (Some (entry_state, tape))
+  in
   states |> Seq.iter print_machine_state;
   Format.printf "@."
 
