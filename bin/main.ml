@@ -92,7 +92,7 @@ let expect token l =
   | Some (t, _l) -> not_expected token (Some t)
   | None -> not_expected token None
 
-let parse_set lex =
+let parse_symbols_in_braces lex =
   let _obr, lex = expect "{" lex in
   let rec go lex rev_syms =
     match lex |> Seq.uncons with
@@ -103,6 +103,9 @@ let parse_set lex =
     | None -> not_expected "symbol or }" None
   in
   go lex []
+
+let parse_set = parse_symbols_in_braces
+let parse_tape = parse_symbols_in_braces
 
 let parse_let lex =
   let _let, lex = expect "let" lex in
@@ -122,7 +125,7 @@ let parse_case lex =
 let parse_run lex =
   let _run, lex = expect "run" lex in
   let name, lex = parse_symbol lex in
-  let set, lex = parse_set lex in
+  let set, lex = parse_tape lex in
   Run (name, set), lex
 
 let parse_statements lex =
@@ -133,7 +136,7 @@ let parse_statements lex =
       | ("let", _lex) -> parse_let lex
       | ("case", _lex) -> parse_case lex
       | ("run", _lex) -> parse_run lex
-      | (other, _lex) -> not_expected "keyword let" (Some other)
+      | (other, _lex) -> not_expected "keyword let, case or run" (Some other)
     )
   in
   Seq.unfold f lex
