@@ -24,7 +24,7 @@ trace StartCounting { ! [ ] [ [ ] ] ? _ _ _ _ _ _ _ _ _ _ _ }
 case StartCounting ! ! -> Pick
 case Pick [ ! -> Count[
 case Pick ] ! -> Count]
-case Pick ? ? -> Balanced
+case Pick ? ? -> Check
 
 for b in Brackets
 case Count[ b b -> Count[
@@ -47,3 +47,6 @@ case Dec * * -> Dec
 case Dec _ _ <- Dec1
 case Dec1 * _ <- Reset
 case Dec1 ? ? <- Unbalanced
+
+case Check * * <- Unbalanced
+case Check _ _ <- Balanced
