@@ -11,3 +11,32 @@ case Skip a a -> Skip
 case Skip & done <- Done
 
 trace Skip { 1 0 0 1 0 1 0 & }
+
+let Brackets { [ ] }
+trace StartCounting { ! [ ] [ [ ] ] ? _ _ _ _ _ _ _ _ _ _ _ }
+
+case StartCounting ! ! -> Pick
+case Pick [ ! -> Count[
+case Pick ] ! -> Count]
+
+for b in Brackets
+case Count[ b b -> Count[
+case Count[ ? ? -> Inc
+
+for b in Brackets
+case Count] b b -> Count]
+case Count] ? ? -> Dec
+
+case Inc _ * -> Inc
+case Inc * * <- Reset
+
+case Reset ? ? <- Reset
+case Reset * * <- Reset
+case Reset [ [ <- Reset
+case Reset ] ] <- Reset
+case Reset ! ! -> Pick
+
+case Dec * * -> Dec
+case Dec _ _ <- Dec1
+case Dec1 * _ <- Reset
+case Dec1 ? ? <- Unbalanced

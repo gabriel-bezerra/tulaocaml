@@ -74,6 +74,13 @@ type set = symbol list
 type tape = symbol list
   [@@deriving show]
 
+type run = {
+  trace: bool;
+  entry_state: symbol;
+  tape: tape;
+}
+  [@@deriving show]
+
 type statement =
 | Let of symbol * set
 | For of {
@@ -88,11 +95,7 @@ type statement =
     move: symbol;
     next: symbol;
   }
-| Run of {
-    trace: bool;
-    entry_state: symbol;
-    tape: tape;
-  }
+| Run of run
   [@@deriving show]
 
 let expect token l =
@@ -184,6 +187,167 @@ let parse src =
   |> List.of_seq
   |> ast
 
+module Tape (*: sig
+  type 'a t
+  type move = Left | Right
+  val from_list: 'a list -> 'a t
+  val as_list: 'a t -> 'a list
+  val write: 'a -> 'a t -> 'a t
+  val read: 'a t -> 'a
+end*) = struct (* a zipper of a tape *)
+  type 'a t = {
+    rev_left: 'a list;
+    current: 'a;
+    right: 'a list;
+  }
+
+  type move = Left | Right
+
+  let from_list = function
+  | x :: xs -> { rev_left=[]; current=x; right=xs }
+  | [] -> failwith "expected non-empty tape"
+
+  let to_list { rev_left; current; right } =
+    List.append (List.rev rev_left) (current::right)
+
+  let move s t =
+    match s, t with
+    | Left, { rev_left=[]; current=_; right=_ } -> None
+    | Left, { rev_left=l::ls; current=c; right=rs } -> Some { rev_left=ls; current=l; right=c::rs }
+    | Right, { rev_left=_; current=_; right=[] } -> None
+    | Right, { rev_left=ls; current=c; right=r::rs } -> Some { rev_left=c::ls; current=r; right=rs }
+
+  let write x { rev_left; current=_; right } =
+    { rev_left; current=x; right }
+
+  let read { rev_left=_; current; right=_ } =
+    current
+
+  (* tests *)
+  let () =
+    let t = from_list ["a"; "bc"; "de"; "fgh"] in
+    assert (t.rev_left = []);
+    assert (t.current = "a");
+    assert (t.right = ["bc"; "de"; "fgh"]);
+    assert (read t = "a");
+    assert (to_list t = ["a"; "bc"; "de"; "fgh"]);
+    assert (move Left t = None);
+    assert (move Right t |> Fun.flip Option.bind (move Left) = Some t);
+    let t' = t in
+    let t = move Right t |> Option.get in
+    assert (t.rev_left = ["a"]);
+    assert (t.current = "bc");
+    assert (t.right = ["de"; "fgh"]);
+    assert (read t = "bc");
+    assert (to_list t = ["a"; "bc"; "de"; "fgh"]);
+    assert (move Left t = Some t');
+    assert (move Left t |> Fun.flip Option.bind (move Right) = Some t);
+    assert (move Right t |> Fun.flip Option.bind (move Left) = Some t);
+    (* let t' = t in *)
+    let t = write "x0" t in
+    assert (t.rev_left = ["a"]);
+    assert (t.current = "x0");
+    assert (t.right = ["de"; "fgh"]);
+    assert (read t = "x0");
+    assert (to_list t = ["a"; "x0"; "de"; "fgh"]);
+    (* assert (move Left t = Some t'); *)
+    assert (move Left t |> Fun.flip Option.bind (move Right) = Some t);
+    assert (move Right t |> Fun.flip Option.bind (move Left) = Some t);
+    let t' = t in
+    let t = move Right t |> Option.get in
+    assert (t.rev_left = ["x0"; "a"]);
+    assert (t.current = "de");
+    assert (t.right = ["fgh"]);
+    assert (read t = "de");
+    assert (to_list t = ["a"; "x0"; "de"; "fgh"]);
+    assert (move Left t = Some t');
+    assert (move Left t |> Fun.flip Option.bind (move Right) = Some t);
+    assert (move Right t |> Fun.flip Option.bind (move Left) = Some t);
+    let t' = t in
+    let t = move Right t |> Option.get in
+    assert (t.rev_left = ["de"; "x0"; "a"]);
+    assert (t.current = "fgh");
+    assert (t.right = []);
+    assert (read t = "fgh");
+    assert (to_list t = ["a"; "x0"; "de"; "fgh"]);
+    assert (move Left t = Some t');
+    assert (move Left t |> Fun.flip Option.bind (move Right) = Some t);
+    assert (move Right t = None);
+    (* let t' = t in *)
+    let t = write "x1" t in
+    assert (t.rev_left = ["de"; "x0"; "a"]);
+    assert (t.current = "x1");
+    assert (t.right = []);
+    assert (read t = "x1");
+    assert (to_list t = ["a"; "x0"; "de"; "x1"]);
+    (* assert (move Left t = Some t'); *)
+    assert (move Left t |> Fun.flip Option.bind (move Right) = Some t);
+    (*let t' = t in *)
+    assert (move Right t = None);
+    ()
+end
+
+(* TODO: consider `trace` *)
+let run_once ast { trace=_; entry_state; tape }: unit =
+  (* TODO: make a function (s,r)->(w,m,s) of these instead of expanding them *)
+  let all_cases =
+    ast
+    |> List.filter_map (function
+      | For _ | Let _ -> None (* TODO: expand these *)
+      | Case { state; read; write; move; next; } -> Some ((state, read), (write, move, next))
+      | Run _ -> None)
+    |> List.to_seq
+    |> Hashtbl.of_seq
+  in
+  let tape = Tape.from_list tape in
+  let transition (state, (tape: symbol Tape.t)) =
+    let (let*) = Option.bind in
+    let read = Tape.read tape in
+    let* (write, move, next) = Hashtbl.find_opt all_cases (state, read) in
+    let move = match move with
+      | Symbol "->" -> Tape.Right
+      | Symbol "<-" -> Tape.Left
+      | Symbol _ -> failwith "unexpected move. it must be either -> or <-"
+    in
+    let* tape = tape |> Tape.write write |> Tape.move move in
+    let twice x = x, x in
+    Option.some @@ twice (next, tape)
+  in
+  let print_state (state, tape) =
+    let pp_symbol fmt (Symbol s) = Format.fprintf fmt "%s" s in
+    let pp_symbol_list = Format.pp_print_list ~pp_sep:(fun fmt () -> Format.fprintf fmt " ") pp_symbol in
+    let buff = Buffer.create 0 in
+    let fmt = Format.formatter_of_buffer buff in
+    (* Format.printf "%a: %a@." pp_symbol state pp_symbol_list (tape |> Tape.to_list) *)
+    (* TODO: avoid double space when the tape.rev_left is empty *)
+    Format.fprintf fmt "%a: %a "
+      pp_symbol state
+      pp_symbol_list (tape.Tape.rev_left |> List.rev);
+    let len =
+      Format.pp_print_flush fmt ();
+      buff |> Buffer.length
+    in
+    Format.fprintf fmt "%a %a@."
+      pp_symbol tape.current
+      pp_symbol_list tape.right;
+    Format.fprintf fmt "%s^@." (String.make len ' ');
+    Format.printf "%s" (Buffer.contents buff);
+    ()
+  in
+  let states = Seq.unfold transition (entry_state, tape) in
+  print_state (entry_state, tape);
+  states |> Seq.iter print_state;
+  Format.printf "@."
+
+let run (Ast ast) =
+  let runs =
+    ast |> List.filter_map @@ function
+      | For _ | Let _ | Case _ -> None
+      | Run r -> Some r
+  in
+  runs
+  |> List.iter (run_once ast)
+
 let () =
   let source =
     In_channel.with_open_bin "bin/input.tula" @@
@@ -192,5 +356,5 @@ let () =
   let ast = parse source in
   print_endline source;
   Format.printf "%a@." pp_ast ast;
-  ignore ast
+  run ast
 
