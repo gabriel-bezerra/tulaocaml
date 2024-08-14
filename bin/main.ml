@@ -292,12 +292,14 @@ end*) = struct (* a zipper of a tape *)
     ()
 end
 
-let resolve_in_scope name scope =
-  scope |> SymbolMap.find_opt name
-
-let rec process_for named_sets outer_scope variable (set_name: symbol) body: ((symbol * symbol) * (symbol * symbol * symbol)) Seq.t =
+let rec process_for
+  (named_sets: set SymbolMap.t)
+  (outer_scope: set SymbolMap.t)
+  (variable: symbol) (set_name: symbol)
+  body
+  : ((symbol * symbol) * (symbol * symbol * symbol)) Seq.t =
   let resolved_set =
-    match resolve_in_scope set_name named_sets with
+    match named_sets |> SymbolMap.find_opt set_name with
     | Some x -> x
     | None -> failwith "non-existing set %a" (* TODO: print set name *)
   in
@@ -307,21 +309,35 @@ let rec process_for named_sets outer_scope variable (set_name: symbol) body: ((s
   | Let _ -> failwith "unexpected let in for"
   | Run _ -> failwith "unexpected run in for"
   | Case { state; read; write; move; next } ->
-      let resolved_or_self s =
-        scope
-        |> SymbolMap.find_opt s
-        |> Option.value ~default:[s]
-        |> List.to_seq
+      let all_possible_bindings: (symbol * symbol) list Seq.t =
+        let rec with_bindings unbound bound: (symbol * symbol) list Seq.t =
+          match unbound with
+          | (var_symbol, values) :: rest ->
+            values
+            |> List.to_seq
+            |> Seq.flat_map (fun v ->
+              let bound = (var_symbol, v) :: bound in
+              with_bindings rest bound
+            )
+          | [] ->
+            Seq.return bound
+        in
+        with_bindings (scope |> SymbolMap.bindings) []
       in
-      let (let+) xs f = Seq.map f xs in
-      let (and+) xs ys = Seq.product xs ys in
-      let+ state = resolved_or_self state
-      and+ read = resolved_or_self read
-      and+ write = resolved_or_self write
-      and+ move = resolved_or_self move
-      and+ next = resolved_or_self next
-      in
-      (state, read), (write, move, next)
+      all_possible_bindings |> Seq.map (fun scope ->
+        let resolved_or_self s =
+          scope
+          |> List.assoc_opt s
+          |> Option.value ~default:s
+        in
+        let state = resolved_or_self state
+        and read = resolved_or_self read
+        and write = resolved_or_self write
+        and move = resolved_or_self move
+        and next = resolved_or_self next
+        in
+        (state, read), (write, move, next)
+      )
 
 (* TODO: consider `trace` *)
 let run_once ast { trace=_; entry_state; tape }: unit =
