@@ -1,6 +1,6 @@
 module Lexer = struct
   type token = string
-    [@@deriving show]
+    [@@deriving show, ord]
 
   type t = token Seq.t
 
@@ -40,7 +40,12 @@ module Lexer = struct
 end
 
 type symbol = Symbol of Lexer.token
-  [@@deriving show]
+  [@@deriving show, ord]
+
+module SymbolMap = Map.Make (struct
+  type t = symbol
+  let compare = compare_symbol
+end)
 
 let not_expected expected got =
   let got =
@@ -287,23 +292,68 @@ end*) = struct (* a zipper of a tape *)
     ()
 end
 
+let resolve_in_scope name scope =
+  scope |> SymbolMap.find_opt name
+
+let rec process_for named_sets outer_scope variable (set_name: symbol) body: ((symbol * symbol) * (symbol * symbol * symbol)) Seq.t =
+  let resolved_set =
+    match resolve_in_scope set_name named_sets with
+    | Some x -> x
+    | None -> failwith "non-existing set %a" (* TODO: print set name *)
+  in
+  let scope = outer_scope |> SymbolMap.add variable resolved_set in
+  match body with
+  | For { variable; set; body } -> process_for named_sets scope variable set body
+  | Let _ -> failwith "unexpected let in for"
+  | Run _ -> failwith "unexpected run in for"
+  | Case { state; read; write; move; next } ->
+      let resolved_or_self s =
+        scope
+        |> SymbolMap.find_opt s
+        |> Option.value ~default:[s]
+        |> List.to_seq
+      in
+      let (let+) xs f = Seq.map f xs in
+      let (and+) xs ys = Seq.product xs ys in
+      let+ state = resolved_or_self state
+      and+ read = resolved_or_self read
+      and+ write = resolved_or_self write
+      and+ move = resolved_or_self move
+      and+ next = resolved_or_self next
+      in
+      (state, read), (write, move, next)
+
 (* TODO: consider `trace` *)
 let run_once ast { trace=_; entry_state; tape }: unit =
   (* TODO: make a function (s,r)->(w,m,s) of these instead of expanding them *)
-  let all_cases =
-    ast
-    |> List.filter_map (function
-      | For _ | Let _ -> None (* TODO: expand these *)
-      | Case { state; read; write; move; next; } -> Some ((state, read), (write, move, next))
-      | Run _ -> None)
-    |> List.to_seq
-    |> Hashtbl.of_seq
+  let delta =
+    (* TODO: accumulate all sets, named and anonymous *)
+    let named_sets =
+      ast
+      |> List.filter_map (function
+        | Let (a, b) -> Some (a, b) (* TODO: what happens if the key is already used? *)
+        | For _ | Case _ | Run _ -> None)
+      |> List.to_seq
+      |> SymbolMap.of_seq
+    in
+    let all_cases =
+      ast
+      |> List.to_seq
+      |> Seq.filter_map (function
+        | Let _ -> None
+        | For { variable; set; body } -> Some (process_for named_sets SymbolMap.empty variable set body)
+        | Case { state; read; write; move; next; } -> Some ([(state, read), (write, move, next)] |> List.to_seq)
+        | Run _ -> None)
+      |> Seq.flat_map (fun x -> x)
+      |> Hashtbl.of_seq
+    in
+    fun (state, read) -> Hashtbl.find_opt all_cases (state, read)
   in
   let tape = Tape.from_list tape in
   let transition (state, (tape: symbol Tape.t)) =
     let (let*) = Option.bind in
     let read = Tape.read tape in
-    let* (write, move, next) = Hashtbl.find_opt all_cases (state, read) in
+    let* (write, move, next) = delta (state, read) in
     let move = match move with
       | Symbol "->" -> Tape.Right
       | Symbol "<-" -> Tape.Left
