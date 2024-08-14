@@ -73,6 +73,13 @@ type set = symbol list
 
 type statement =
 | Let of symbol * set
+| Case of {
+    state: symbol;
+    read: symbol;
+    write: symbol;
+    move: symbol;
+    next: symbol;
+  }
   [@@deriving show]
 
 let expect token l =
@@ -99,12 +106,22 @@ let parse_let lex =
   let set, lex = parse_set lex in
   Let (name, set), lex
 
+let parse_case lex =
+  let _case, lex = expect "case" lex in
+  let state, lex = parse_symbol lex in
+  let read, lex = parse_symbol lex in
+  let write, lex = parse_symbol lex in
+  let move, lex = parse_symbol lex in
+  let next, lex = parse_symbol lex in
+  Case { state; read; write; move; next; }, lex
+
 let parse_statements lex =
   let f lex =
     lex
     |> Seq.uncons
     |> Option.map (function
       | ("let", _lex) -> parse_let lex
+      | ("case", _lex) -> parse_case lex
       | (other, _lex) -> not_expected "keyword let" (Some other)
     )
   in
