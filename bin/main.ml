@@ -21,6 +21,28 @@ module Lexer = struct
   let is_token c =
     not (is_whitespace c || is_special c)
 
+  let grab_quoted_symbol chars =
+    match chars |> Seq.uncons with
+    | Some ('\'' as open_quote, rest) ->
+      let between_quotes =
+        rest |> Seq.take_while (fun c -> not @@ Char.equal '\'' c)
+      in
+      let without_inner =
+        rest |> Seq.drop (Seq.length between_quotes)
+      in
+      let result =
+        match without_inner |> Seq.uncons with
+        | Some ('\'' as close_quote, _rest) ->
+          Seq.return open_quote
+          |> Seq.append between_quotes
+          |> Seq.append (Seq.return close_quote)
+        | None -> not_expected "end of quoted literal" (Some "end of file")
+        | Some (_, _rest) -> failwith "this should have been unreachable"
+      in
+      result
+    | None -> failwith "unreachable"
+
+
   let next_token chars =
     let prefix =
       match chars |> Seq.uncons with
@@ -39,6 +61,17 @@ module Lexer = struct
             |> Seq.append (Seq.return close_quote)
           | None -> not_expected "end of quoted literal" (Some "end of file")
           | Some (_, _rest) -> failwith "this should have been unreachable"
+        in
+        result
+      | Some ('/' as first_slash, rest) ->
+        let next =
+          match rest |> Seq.uncons with
+          | Some ('/' as second_slash, _rest) ->
+            Seq.return open_quote
+            |> Seq.append between_quotes
+            |> Seq.append (Seq.return close_quote)
+          | None -> 
+          | Some (_, _rest) -> 
         in
         result
       | Some (c, _rest) when is_special c -> Seq.return c
