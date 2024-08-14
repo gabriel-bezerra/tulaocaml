@@ -1,0 +1,6 @@
+(executable
+ (public_name tulaocaml)
+ (name main)
+ (libraries tulaocaml)
+ (preprocess
+   (pps ppx_deriving.show)))
