@@ -83,7 +83,11 @@ type statement =
     move: symbol;
     next: symbol;
   }
-| Run of symbol * tape
+| Run of {
+    trace: bool;
+    entry_state: symbol;
+    tape: tape;
+  }
   [@@deriving show]
 
 let expect token l =
@@ -123,10 +127,16 @@ let parse_case lex =
   Case { state; read; write; move; next; }, lex
 
 let parse_run lex =
-  let _run, lex = expect "run" lex in
-  let name, lex = parse_symbol lex in
-  let set, lex = parse_tape lex in
-  Run (name, set), lex
+  let trace, lex =
+    match lex |> Seq.uncons with
+    | Some ("run", lex) -> false, lex
+    | Some ("trace", lex) -> true, lex
+    | Some (other, _lex) -> not_expected "run or trace" (Some other)
+    | None -> not_expected "run or trace" None
+  in
+  let entry_state, lex = parse_symbol lex in
+  let tape, lex = parse_tape lex in
+  Run { trace; entry_state; tape; }, lex
 
 let parse_statements lex =
   let f lex =
@@ -135,8 +145,8 @@ let parse_statements lex =
     |> Option.map (function
       | ("let", _lex) -> parse_let lex
       | ("case", _lex) -> parse_case lex
-      | ("run", _lex) -> parse_run lex
-      | (other, _lex) -> not_expected "keyword let, case or run" (Some other)
+      | (("run" | "trace"), _lex) -> parse_run lex
+      | (other, _lex) -> not_expected "keyword let, case, run or trace" (Some other)
     )
   in
   Seq.unfold f lex
