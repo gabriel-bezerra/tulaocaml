@@ -71,6 +71,9 @@ let () =
 type set = symbol list
   [@@deriving show]
 
+type tape = symbol list
+  [@@deriving show]
+
 type statement =
 | Let of symbol * set
 | Case of {
@@ -80,6 +83,7 @@ type statement =
     move: symbol;
     next: symbol;
   }
+| Run of symbol * tape
   [@@deriving show]
 
 let expect token l =
@@ -115,6 +119,12 @@ let parse_case lex =
   let next, lex = parse_symbol lex in
   Case { state; read; write; move; next; }, lex
 
+let parse_run lex =
+  let _run, lex = expect "run" lex in
+  let name, lex = parse_symbol lex in
+  let set, lex = parse_set lex in
+  Run (name, set), lex
+
 let parse_statements lex =
   let f lex =
     lex
@@ -122,6 +132,7 @@ let parse_statements lex =
     |> Option.map (function
       | ("let", _lex) -> parse_let lex
       | ("case", _lex) -> parse_case lex
+      | ("run", _lex) -> parse_run lex
       | (other, _lex) -> not_expected "keyword let" (Some other)
     )
   in
