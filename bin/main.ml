@@ -1,3 +1,11 @@
+let not_expected expected got =
+  let got =
+    match got with
+    | None -> "nothing"
+    | Some g -> g
+  in
+  failwith (Format.sprintf "Expected %s, got %s" expected got)
+
 module Lexer = struct
   type token = string
     [@@deriving show, ord]
@@ -7,13 +15,38 @@ module Lexer = struct
   let is_whitespace c =
     Char.equal ' ' c || Char.equal '\n' c
 
+  let is_special c =
+    Char.equal '(' c || Char.equal ')' c
+
   let is_token c =
-    not (is_whitespace c)
+    not (is_whitespace c || is_special c)
 
   let next_token chars =
     let prefix =
-      chars
-      |> Seq.take_while (is_token)
+      match chars |> Seq.uncons with
+      | Some ('\'' as open_quote, rest) ->
+        let between_quotes =
+          rest |> Seq.take_while (fun c -> not @@ Char.equal '\'' c)
+        in
+        let without_inner =
+          rest |> Seq.drop (Seq.length between_quotes)
+        in
+        let result =
+          match without_inner |> Seq.uncons with
+          | Some ('\'' as close_quote, _rest) ->
+            Seq.return open_quote
+            |> Seq.append between_quotes
+            |> Seq.append (Seq.return close_quote)
+          | None -> not_expected "end of quoted literal" (Some "end of file")
+          | Some (_, _rest) -> failwith "this should have been unreachable"
+        in
+        result
+      | Some (c, _rest) when is_special c -> Seq.return c
+      | Some (_, _rest) -> chars |> Seq.take_while (is_token)
+      | None -> Seq.empty
+    in
+    let prefix =
+      prefix
       |> String.of_seq
     in
     let chars = chars |> Seq.drop (String.length prefix) in
@@ -36,10 +69,22 @@ module Lexer = struct
     assert (make " " |> Seq.uncons |> Option.is_none);
     assert (make " \n" |> Seq.uncons |> Option.is_none);
     assert (make " ab bc \n" |> List.of_seq = ["ab"; "bc"]);
+    assert (make " (ab bc) \n" |> List.of_seq = ["("; "ab"; "bc"; ")"]);
+    assert (make " '(ab bc)' \n" |> List.of_seq = ["'(ab bc)'"]);
     ()
 end
 
-type symbol = Symbol of Lexer.token
+type atom = Atom of Lexer.token
+  [@@deriving show, ord]
+
+module AtomMap = Map.Make (struct
+  type t = atom
+  let compare = compare_atom
+end)
+
+type symbol =
+| SAtom of atom
+| SList of symbol list
   [@@deriving show, ord]
 
 module SymbolMap = Map.Make (struct
@@ -47,27 +92,41 @@ module SymbolMap = Map.Make (struct
   let compare = compare_symbol
 end)
 
-let not_expected expected got =
-  let got =
-    match got with
-    | None -> "nothing"
-    | Some g -> g
-  in
-  failwith (Format.sprintf "Expected %s, got %s" expected got)
-
-let parse_symbol lex =
+let parse_atom lex =
   match lex |> Seq.uncons with
-  | Some (token, lex) -> (Symbol token, lex)
+  | Some ("(" | ")" as p, _lex) ->
+      (* should this be an assert? *)
+      not_expected "atom" (Some p)
+  | Some (token, lex) -> (Atom token, lex)
+  | None -> not_expected "atom" None
+
+let rec parse_symbol_list rev_symbols lex =
+  match lex |> Seq.uncons with
+  | Some (")", lex) ->
+      let symbols = List.rev rev_symbols in
+      SList symbols, lex
+  | Some (_token, _lex) ->
+      let s, lex = parse_symbol lex in
+      parse_symbol_list (s :: rev_symbols) lex
+  | None -> not_expected "symbol list" None
+
+and parse_symbol lex =
+  match lex |> Seq.uncons with
+  | Some (")", _lex) -> not_expected "symbol" (Some ")")
+  | Some ("(", lex) -> parse_symbol_list [] lex
+  | Some (_token, _lex) ->
+      let atom, lex = parse_atom lex in
+      (SAtom atom, lex)
   | None -> not_expected "symbol" None
 
 (* tests *)
 let () =
   begin
     let l = Lexer.make " ab bc \n" in
-    let ((Symbol x), l) = parse_symbol l in
-    assert (x = "ab");
-    let ((Symbol x), l) = parse_symbol l in
-    assert (x = "bc");
+    let (x, l) = parse_symbol l in
+    assert (x = (SAtom (Atom "ab")));
+    let (x, l) = parse_symbol l in
+    assert (x = (SAtom (Atom "bc")));
     let x = Seq.uncons l in
     assert (x = None);
     ()
@@ -89,7 +148,7 @@ type run = {
 type statement =
 | Let of symbol * set
 | For of {
-  variable: symbol; (* TODO: collection here *)
+  variable: atom; (* TODO: collection here *)
   set: symbol;
   body: statement; (* TODO: collection here *)
 }
@@ -138,7 +197,7 @@ let parse_let lex =
    in the file with `and` as separator. *)
 let parse_for parse_statement lex =
   let _for, lex = expect "for" lex in
-  let variable, lex = parse_symbol lex in
+  let variable, lex = parse_atom lex in
   let _in, lex = expect "in" lex in
   let set, lex = parse_symbol lex in
   let body, lex = parse_statement lex in
@@ -294,8 +353,8 @@ end
 
 let rec process_for
   (named_sets: set SymbolMap.t)
-  (outer_scope: set SymbolMap.t)
-  (variable: symbol) (set_name: symbol)
+  (outer_scope: set AtomMap.t)
+  (variable: atom) (set_name: symbol)
   body
   : ((symbol * symbol) * (symbol * symbol * symbol)) Seq.t =
   let resolved_set =
@@ -303,14 +362,14 @@ let rec process_for
     | Some x -> x
     | None -> failwith "non-existing set %a" (* TODO: print set name *)
   in
-  let scope = outer_scope |> SymbolMap.add variable resolved_set in
+  let scope = outer_scope |> AtomMap.add variable resolved_set in
   match body with
   | For { variable; set; body } -> process_for named_sets scope variable set body
   | Let _ -> failwith "unexpected let in for"
   | Run _ -> failwith "unexpected run in for"
   | Case { state; read; write; move; next } ->
-      let all_possible_bindings: (symbol * symbol) list Seq.t =
-        let rec with_bindings unbound bound: (symbol * symbol) list Seq.t =
+      let all_possible_bindings: (atom * symbol) list Seq.t =
+        let rec with_bindings unbound bound: (atom * symbol) list Seq.t =
           match unbound with
           | (var_symbol, values) :: rest ->
             values
@@ -322,12 +381,14 @@ let rec process_for
           | [] ->
             Seq.return bound
         in
-        with_bindings (scope |> SymbolMap.bindings) []
+        with_bindings (scope |> AtomMap.bindings) []
       in
       all_possible_bindings |> Seq.map (fun scope ->
-        let resolved_or_self s =
+        let resolved_or_self = function
+        | (SList _) as s -> s
+        | (SAtom a) as s ->
           scope
-          |> List.assoc_opt s
+          |> List.assoc_opt a
           |> Option.value ~default:s
         in
         let state = resolved_or_self state
@@ -357,7 +418,7 @@ let run_once ast { trace=_; entry_state; tape }: unit =
       |> List.to_seq
       |> Seq.filter_map (function
         | Let _ -> None
-        | For { variable; set; body } -> Some (process_for named_sets SymbolMap.empty variable set body)
+        | For { variable; set; body } -> Some (process_for named_sets AtomMap.empty variable set body)
         | Case { state; read; write; move; next; } -> Some ([(state, read), (write, move, next)] |> List.to_seq)
         | Run _ -> None)
       |> Seq.flat_map (fun x -> x)
@@ -371,9 +432,11 @@ let run_once ast { trace=_; entry_state; tape }: unit =
     let read = Tape.read tape in
     let* (write, move, next) = delta (state, read) in
     let move = match move with
-      | Symbol "->" -> Tape.Right
-      | Symbol "<-" -> Tape.Left
-      | Symbol _ -> failwith "unexpected move. it must be either -> or <-"
+      | SAtom (Atom "->") -> Tape.Right
+      | SAtom (Atom "<-") -> Tape.Left
+      | SAtom _  | SList _ ->
+          (* TODO: show which invalid move was attempted *)
+          failwith "unexpected move. it must be either -> or <-"
     in
     let* tape = tape |> Tape.write write |> Tape.move move in
     Some (next, tape)
@@ -381,7 +444,13 @@ let run_once ast { trace=_; entry_state; tape }: unit =
   let print_machine_state (state, tape) =
     (* Format.printf "%a: %a@." pp_symbol state pp_symbol_list (tape |> Tape.to_list) *)
     let pp_sep fmt () = Format.fprintf fmt " " in
-    let pp_symbol fmt (Symbol s) = Format.fprintf fmt "%s" s in
+    let rec pp_symbol fmt = function
+      | SAtom (Atom x) -> Format.fprintf fmt "%s" x
+      | SList ss ->
+        Format.fprintf fmt "(%a)"
+          (Format.pp_print_list ~pp_sep pp_symbol)
+          ss
+    in
     let pp_symbol_list = Format.pp_print_list ~pp_sep pp_symbol in
     let print_with_marker_under_element prefix element suffix =
       (* TODO: make it work nicely with formatting boxes: the first line is the only one that needs the buffer *)

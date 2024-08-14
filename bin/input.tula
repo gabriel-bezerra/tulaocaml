@@ -18,21 +18,23 @@ case Skip & done <- Done
 
 trace Skip { 1 0 0 1 0 1 0 & }
 
-let Brackets { [ ] }
-trace StartCounting { ! [ ] [ [ ] ] ? _ _ _ _ _ _ _ _ _ _ _ }
+let Brackets { [ ] '(' ')' }
+trace StartCounting { ! [ ] [ '(' ] ')' ? _ _ _ _ _ _ _ _ _ _ _ }
 
 case StartCounting ! ! -> Pick
-case Pick [ ! -> Count[
-case Pick ] ! -> Count]
+case Pick [ ! -> (Count [)
+case Pick '(' ! -> (Count [)
+case Pick ] ! -> (Count ])
+case Pick ')' ! -> (Count ])
 case Pick ? ? -> Check
 
 for b in Brackets
-case Count[ b b -> Count[
-case Count[ ? ? -> Inc
+case (Count [) b b -> (Count [)
+case (Count [) ? ? -> Inc
 
 for b in Brackets
-case Count] b b -> Count]
-case Count] ? ? -> Dec
+case (Count ]) b b -> (Count ])
+case (Count ]) ? ? -> Dec
 
 case Inc * * -> Inc
 case Inc _ * <- Reset
