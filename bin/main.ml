@@ -313,10 +313,13 @@ let run_once ast { trace=_; entry_state; tape }: unit =
     let twice x = x, x in
     Option.some @@ twice (next, tape)
   in
-  let print_state (state, tape) =
+  let print_machine_state (state, tape) =
+    (* Format.printf "%a: %a@." pp_symbol state pp_symbol_list (tape |> Tape.to_list) *)
+    let pp_sep fmt () = Format.fprintf fmt " " in
     let pp_symbol fmt (Symbol s) = Format.fprintf fmt "%s" s in
-    let pp_symbol_list = Format.pp_print_list ~pp_sep:(fun fmt () -> Format.fprintf fmt " ") pp_symbol in
+    let pp_symbol_list = Format.pp_print_list ~pp_sep pp_symbol in
     let print_with_marker_under_element prefix element suffix =
+      (* TODO: make it work nicely with formatting boxes: the first line is the only one that needs the buffer *)
       let buff = Buffer.create 0 in
       let fmt = Format.formatter_of_buffer buff in
       Format.fprintf fmt "%t@?" prefix; (* @? important for buf len *)
@@ -329,24 +332,22 @@ let run_once ast { trace=_; entry_state; tape }: unit =
         (String.make (len1 - len0 - 1) '~');
       Format.dprintf "%s" (Buffer.contents buff);
     in
-    (* Format.printf "%a: %a@." pp_symbol state pp_symbol_list (tape |> Tape.to_list) *)
-    let m = (Format.dprintf "%a" pp_symbol tape.Tape.current) in
+    let c = (Format.dprintf "%a" pp_symbol tape.Tape.current) in
     let l =
       match tape.rev_left with
-      | [] -> (Format.dprintf "%a: " pp_symbol state)
-      | ls -> (Format.dprintf "%a: %a "  pp_symbol state pp_symbol_list (ls |> List.rev))
+      | [] -> (Format.dprintf "") | ls -> (Format.dprintf "%a%a" pp_symbol_list (ls |> List.rev) pp_sep ())
     in
     let r =
       match tape.right with
-      | [] -> (Format.dprintf "")
-      | rs -> (Format.dprintf " %a" pp_symbol_list rs)
+      | [] -> (Format.dprintf "") | rs -> (Format.dprintf "%a%a" pp_sep () pp_symbol_list rs)
     in
-    Format.printf "%t" (print_with_marker_under_element l m r);
+    let l = (Format.dprintf "%a: %t" pp_symbol state l) in
+    Format.printf "%t" (print_with_marker_under_element l c r);
     ()
   in
   let states = Seq.unfold transition (entry_state, tape) in
-  print_state (entry_state, tape);
-  states |> Seq.iter print_state;
+  print_machine_state (entry_state, tape);
+  states |> Seq.iter print_machine_state;
   Format.printf "@."
 
 let run (Ast ast) =
