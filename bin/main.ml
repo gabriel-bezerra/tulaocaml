@@ -76,6 +76,11 @@ type tape = symbol list
 
 type statement =
 | Let of symbol * set
+| For of {
+  variable: symbol; (* TODO: collection here *)
+  set: symbol;
+  body: statement; (* TODO: collection here *)
+}
 | Case of {
     state: symbol;
     read: symbol;
@@ -117,6 +122,20 @@ let parse_let lex =
   let set, lex = parse_set lex in
   Let (name, set), lex
 
+(* parse_statement here is open recursion..
+   The actual parse_statement should pass itself
+   as argumebt when calling this function.
+   I used open recursion here just to avoid
+   having to declare these functions together
+   in the file with `and` as separator. *)
+let parse_for parse_statement lex =
+  let _for, lex = expect "for" lex in
+  let variable, lex = parse_symbol lex in
+  let _in, lex = expect "in" lex in
+  let set, lex = parse_symbol lex in
+  let body, lex = parse_statement lex in
+  For { variable; set; body }, lex
+
 let parse_case lex =
   let _case, lex = expect "case" lex in
   let state, lex = parse_symbol lex in
@@ -138,16 +157,20 @@ let parse_run lex =
   let tape, lex = parse_tape lex in
   Run { trace; entry_state; tape; }, lex
 
+let rec parse_statement lex =
+  match lex |> Seq.uncons with
+  | Some ("let", _lex) -> parse_let lex
+  | Some ("for", _lex) -> parse_for parse_statement lex
+  | Some ("case", _lex) -> parse_case lex
+  | Some (("run" | "trace"), _lex) -> parse_run lex
+  | Some (other, _lex) -> not_expected "keyword let, case, run or trace" (Some other)
+  | None -> not_expected "keyword let, case, run or trace" None
+
 let parse_statements lex =
   let f lex =
     lex
     |> Seq.uncons
-    |> Option.map (function
-      | ("let", _lex) -> parse_let lex
-      | ("case", _lex) -> parse_case lex
-      | (("run" | "trace"), _lex) -> parse_run lex
-      | (other, _lex) -> not_expected "keyword let, case, run or trace" (Some other)
-    )
+    |> Option.map (fun _ -> parse_statement lex)
   in
   Seq.unfold f lex
 
