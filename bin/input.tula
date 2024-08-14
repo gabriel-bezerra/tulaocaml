@@ -33,13 +33,13 @@ for b in Brackets
 case Count] b b -> Count]
 case Count] ? ? -> Dec
 
-case Inc _ * -> Inc
-case Inc * * <- Reset
+case Inc * * -> Inc
+case Inc _ * <- Reset
 
 case Reset ? ? <- Reset
 case Reset * * <- Reset
-case Reset [ [ <- Reset
-case Reset ] ] <- Reset
+for b in Brackets
+case Reset b b <- Reset
 case Reset ! ! -> Pick
 
 case Dec * * -> Dec
