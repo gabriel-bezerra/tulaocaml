@@ -6,6 +6,12 @@ case Inc 1 0 -> Inc
 run Inc { 0 0 0 0 1 0 }
 trace Inc { 1 1 1 0 1 0 }
 
+case Inc2 000 111 -> Halt2
+case Inc2 111 000 -> Inc2
+
+run Inc2 { 000 000 000 000 111 000 }
+trace Inc2 { 111 111 111 000 111 000 }
+
 for a in Bin
 case Skip a a -> Skip
 case Skip & done <- Done

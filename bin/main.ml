@@ -316,22 +316,32 @@ let run_once ast { trace=_; entry_state; tape }: unit =
   let print_state (state, tape) =
     let pp_symbol fmt (Symbol s) = Format.fprintf fmt "%s" s in
     let pp_symbol_list = Format.pp_print_list ~pp_sep:(fun fmt () -> Format.fprintf fmt " ") pp_symbol in
-    let buff = Buffer.create 0 in
-    let fmt = Format.formatter_of_buffer buff in
-    (* Format.printf "%a: %a@." pp_symbol state pp_symbol_list (tape |> Tape.to_list) *)
-    (* TODO: avoid double space when the tape.rev_left is empty *)
-    Format.fprintf fmt "%a: %a "
-      pp_symbol state
-      pp_symbol_list (tape.Tape.rev_left |> List.rev);
-    let len =
-      Format.pp_print_flush fmt ();
-      buff |> Buffer.length
+    let print_with_marker_under_element prefix element suffix =
+      let buff = Buffer.create 0 in
+      let fmt = Format.formatter_of_buffer buff in
+      Format.fprintf fmt "%t@?" prefix; (* @? important for buf len *)
+      let len0 = buff |> Buffer.length in
+      Format.fprintf fmt "%t@?" element; (* @? important for buf len *)
+      let len1 = buff |> Buffer.length in
+      Format.fprintf fmt "%t@\n" suffix;
+      Format.fprintf fmt "%s^%s@." (* should this end with `@.` or with `@?` ? *)
+        (String.make len0 ' ')
+        (String.make (len1 - len0 - 1) '~');
+      Format.dprintf "%s" (Buffer.contents buff);
     in
-    Format.fprintf fmt "%a %a@."
-      pp_symbol tape.current
-      pp_symbol_list tape.right;
-    Format.fprintf fmt "%s^@." (String.make len ' ');
-    Format.printf "%s" (Buffer.contents buff);
+    (* Format.printf "%a: %a@." pp_symbol state pp_symbol_list (tape |> Tape.to_list) *)
+    let m = (Format.dprintf "%a" pp_symbol tape.Tape.current) in
+    let l =
+      match tape.rev_left with
+      | [] -> (Format.dprintf "%a: " pp_symbol state)
+      | ls -> (Format.dprintf "%a: %a "  pp_symbol state pp_symbol_list (ls |> List.rev))
+    in
+    let r =
+      match tape.right with
+      | [] -> (Format.dprintf "")
+      | rs -> (Format.dprintf " %a" pp_symbol_list rs)
+    in
+    Format.printf "%t" (print_with_marker_under_element l m r);
     ()
   in
   let states = Seq.unfold transition (entry_state, tape) in
